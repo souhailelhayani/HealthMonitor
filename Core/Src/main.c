@@ -19,12 +19,13 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 
-#include "stm32l4s5i_iot01_accelero.h"
-#include "stm32l4s5i_iot01_tsensor.h"
-#include "max30102_for_stm32_hal.h"
-
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+
+#include "max30102_for_stm32_hal.h"
+#include "stm32l4s5i_iot01_tsensor.h"
+#include "stm32l4s5i_iot01_accelero.h"
+#include "stm32l4s5i_iot01.h"
 
 /* USER CODE END Includes */
 
@@ -116,15 +117,19 @@ int main(void)
 
   //init the pulse sensor
 
-  max30102_init(&max30102, &hi2c1);
+//  max30102_init(&max30102, &hi2c1);
+  max30102_init(&max30102, &hi2c2);
   max30102_reset(&max30102);
   max30102_clear_fifo(&max30102);
   // FIFO configurations
   max30102_set_fifo_config(&max30102, max30102_smp_ave_8, 1, 7);
   // LED configurations
-  max30102_set_led_pulse_width(&max30102, max30102_spo2_16_bit);
-  max30102_set_adc_resolution(&max30102, max30102_spo2_adc_2048);
-  max30102_set_sampling_rate(&max30102, max30102_spo2_800);
+//  max30102_set_led_pulse_width(&max30102, max30102_spo2_16_bit);
+//  max30102_set_adc_resolution(&max30102, max30102_spo2_adc_2048);
+//  max30102_set_sampling_rate(&max30102, max30102_spo2_800);
+  max30102_set_led_pulse_width(&max30102, max30102_pw_16_bit);
+  max30102_set_adc_resolution(&max30102, max30102_adc_2048);
+  max30102_set_sampling_rate(&max30102, max30102_sr_800);
   max30102_set_led_current_1(&max30102, 6.2);
   max30102_set_led_current_2(&max30102, 6.2);
 
@@ -422,12 +427,23 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin : button_Pin */
   GPIO_InitStruct.Pin = button_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(button_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : PD10 */
+  GPIO_InitStruct.Pin = GPIO_PIN_10;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 /* USER CODE END MX_GPIO_Init_2 */
