@@ -293,7 +293,6 @@ int main(void)
 	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
 	HAL_Delay(100);
 
->>>>>>> ac174e3fa432b4b10ef021b5d44b6d47eafcf2ad
   }
   /* USER CODE END 3 */
 }
