@@ -27,6 +27,9 @@
 #include "stm32l4s5i_iot01_accelero.h"
 #include "stm32l4s5i_iot01.h"
 
+#include <stdio.h>
+#include <string.h>
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -97,6 +100,9 @@ int btn_state = 0;
 char msg[64];
 max30102_t max30102;
 
+int16_t aDataXYZ[3];
+char output[100];
+
 /* USER CODE END 0 */
 
 /**
@@ -136,6 +142,9 @@ int main(void)
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
+  //init accelerometer
+  BSP_ACCELERO_Init();
+
   //init the pulse sensor
 
 //  max30102_init(&max30102, &hi2c1);
@@ -174,6 +183,7 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
+<<<<<<< HEAD
 //      uint32_t red_value = 10000;
 //      uint32_t ir_value = 20000;
 //      // If either reading is above threshold and sound is not already active, start tone
@@ -255,6 +265,35 @@ int main(void)
 	    HAL_Delay(3000);
 
 
+=======
+	  // If interrupt flag is active
+	if (max30102_has_interrupt(&max30102))
+	  // Run interrupt handler to read FIFO
+	  max30102_interrupt_handler(&max30102);
+
+
+
+	//test to read accelerometer raw values
+	uint16_t len;
+	BSP_ACCELERO_AccGetXYZ(aDataXYZ);
+	sprintf(output, "####################################\r\n");
+	len = strlen(output);
+	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+
+	sprintf(output, "accelerometer x: %d\r\n", aDataXYZ[0]);
+	len = strlen(output);
+	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+
+	sprintf(output, "accelerometer y: %d\r\n", aDataXYZ[1]);
+	len = strlen(output);
+	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+
+	sprintf(output, "accelerometer z: %d\r\n", aDataXYZ[2]);
+	len = strlen(output);
+	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+	HAL_Delay(100);
+
+>>>>>>> ac174e3fa432b4b10ef021b5d44b6d47eafcf2ad
   }
   /* USER CODE END 3 */
 }
