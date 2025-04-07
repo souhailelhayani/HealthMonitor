@@ -80,6 +80,7 @@ uint16_t G6_data[28];
 DAC_HandleTypeDef hdac1;
 DMA_HandleTypeDef hdma_dac1_ch1;
 
+I2C_HandleTypeDef hi2c1;
 I2C_HandleTypeDef hi2c2;
 
 TIM_HandleTypeDef htim2;
@@ -98,6 +99,7 @@ static void MX_I2C2_Init(void);
 static void MX_DAC1_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -171,9 +173,11 @@ int main(void)
   MX_I2C2_Init();
   MX_DAC1_Init();
   MX_TIM2_Init();
-  HAL_TIM_Base_Start(&htim2);
   MX_USART1_UART_Init();
+  MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
+
+  //start timer 2, used by dma
 
   //init accelerometer
   BSP_ACCELERO_Init();
@@ -402,23 +406,23 @@ int main(void)
 	}
 
 	//get gyroscope data
-//	BSP_GYRO_GetXYZ(gDataXYZ);
-//
-//	sprintf(output, "####################################\r\n");
-//	len = strlen(output);
-//	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
-//
-//	sprintf(output, "gyro tilt about x axis: %.5f\r\n", gDataXYZ[0]);
-//	len = strlen(output);
-//	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
-//
-//	sprintf(output, "gyro tilt about y axis: %.5f\r\n", gDataXYZ[1]);
-//	len = strlen(output);
-//	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
-//
-//	sprintf(output, "gyro tilt about z axis: %.5f\r\n", gDataXYZ[2]);
-//	len = strlen(output);
-//	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+	BSP_GYRO_GetXYZ(gDataXYZ);
+
+	sprintf(output, "####################################\r\n");
+	len = strlen(output);
+	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+
+	sprintf(output, "gyro tilt about x axis: %.5f\r\n", gDataXYZ[0]);
+	len = strlen(output);
+	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+
+	sprintf(output, "gyro tilt about y axis: %.5f\r\n", gDataXYZ[1]);
+	len = strlen(output);
+	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+
+	sprintf(output, "gyro tilt about z axis: %.5f\r\n", gDataXYZ[2]);
+	len = strlen(output);
+	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
 
 	HAL_Delay(100);
 
@@ -517,6 +521,54 @@ static void MX_DAC1_Init(void)
   /* USER CODE BEGIN DAC1_Init 2 */
 
   /* USER CODE END DAC1_Init 2 */
+
+}
+
+/**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.Timing = 0x30A175AB;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Analogue filter
+  */
+  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Digital filter
+  */
+  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
 
 }
 
