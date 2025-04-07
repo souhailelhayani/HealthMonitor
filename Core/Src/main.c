@@ -53,6 +53,26 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
+#define THRESHOLD_VALUE 250
+
+// Triangle wave sample array (50 samples) – using the values from your previous project
+uint16_t triangle_wave[50] = {
+    0, 163, 327, 491, 655, 819, 982, 1146, 1310, 1474,
+    1638, 1801, 1965, 2129, 2293, 2457, 2620, 2784, 2948, 3112,
+    3276, 3439, 3603, 3767, 3931, 4095, 3931, 3767, 3603, 3439,
+    3276, 3112, 2948, 2784, 2620, 2457, 2293, 2129, 1965, 1801,
+    1638, 1474, 1310, 1146, 982, 819, 655, 491, 327, 163
+};
+
+uint8_t sound_active = 0; // flag to indicate whether the tone is currently playing
+
+int tone; //keeps track of tone
+int C6_size = 44; // C6 is 1 kHz, so 44 samples per period
+int E6_size = 33; // E6 is 1.3 kHz, so 33 samples per period
+int G6_size = 28; // G6 is 1.57 kHz, so 28 samples per period
+uint16_t C6_data[44];
+uint16_t E6_data[33];
+uint16_t G6_data[28];
 
 /* USER CODE END PM */
 
@@ -86,7 +106,7 @@ static void MX_USART1_UART_Init(void);
 /* USER CODE BEGIN 0 */
 
 int btn_state = 0;
-
+char msg[64];
 max30102_t max30102;
 
 //store accelerometer values
@@ -151,6 +171,7 @@ int main(void)
   MX_I2C2_Init();
   MX_DAC1_Init();
   MX_TIM2_Init();
+  HAL_TIM_Base_Start(&htim2);
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
 
@@ -177,29 +198,30 @@ int main(void)
   //init the pulse sensor
 
 //  max30102_init(&max30102, &hi2c1);
-  max30102_init(&max30102, &hi2c2);
-  max30102_reset(&max30102);
-  max30102_clear_fifo(&max30102);
-  // FIFO configurations
-  max30102_set_fifo_config(&max30102, max30102_smp_ave_8, 1, 7);
-  // LED configurations
+//  max30102_init(&max30102, &hi2c2);
+//  max30102_reset(&max30102);
+//  max30102_clear_fifo(&max30102);
+//  // FIFO configurations
+//  max30102_set_fifo_config(&max30102, max30102_smp_ave_8, 1, 7);
+//  // LED configurations
 //  max30102_set_led_pulse_width(&max30102, max30102_spo2_16_bit);
 //  max30102_set_adc_resolution(&max30102, max30102_spo2_adc_2048);
 //  max30102_set_sampling_rate(&max30102, max30102_spo2_800);
-  max30102_set_led_pulse_width(&max30102, max30102_pw_16_bit);
-  max30102_set_adc_resolution(&max30102, max30102_adc_2048);
-  max30102_set_sampling_rate(&max30102, max30102_sr_800);
-  max30102_set_led_current_1(&max30102, 6.2);
-  max30102_set_led_current_2(&max30102, 6.2);
+//  max30102_set_led_pulse_width(&max30102, max30102_pw_16_bit);
+//  max30102_set_adc_resolution(&max30102, max30102_adc_2048);
+//  max30102_set_sampling_rate(&max30102, max30102_sr_800);
+//  max30102_set_led_current_1(&max30102, 6.2);
+//  max30102_set_led_current_2(&max30102, 6.2);
+//
+//  // Enter SpO2 mode
+//  max30102_set_mode(&max30102, max30102_spo2);
+//  // Enable FIFO_A_FULL interrupt
+//  max30102_set_a_full(&max30102, 1);
+//  // Enable die temperature measurement
+//  max30102_set_die_temp_en(&max30102, 1);
+//  // Enable DIE_TEMP_RDY interrupt
+//  max30102_set_die_temp_rdy(&max30102, 1);
 
-  // Enter SpO2 mode
-  max30102_set_mode(&max30102, max30102_spo2);
-  // Enable FIFO_A_FULL interrupt
-  max30102_set_a_full(&max30102, 1);
-  // Enable die temperature measurement
-  max30102_set_die_temp_en(&max30102, 1);
-  // Enable DIE_TEMP_RDY interrupt
-  max30102_set_die_temp_rdy(&max30102, 1);
 
   /* USER CODE END 2 */
 
@@ -210,6 +232,87 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
+//      uint32_t red_value = 10000;
+//      uint32_t ir_value = 20000;
+//      // If either reading is above threshold and sound is not already active, start tone
+//      if ((red_value > THRESHOLD_VALUE || ir_value > THRESHOLD_VALUE) && !sound_active)
+//      {
+//          // Start the DAC using DMA to output the E6 tone
+//      	HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, (uint32_t*)triangle_wave, 50, DAC_ALIGN_12B_R);
+//          sound_active = 1;
+//      }
+//      else if ((red_value <= THRESHOLD_VALUE && ir_value <= THRESHOLD_VALUE) && sound_active)
+//      {
+//          HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);
+//          sound_active = 0;
+//      }
+//
+//	    if (max30102_has_interrupt(&max30102))
+//	    {
+//	        // Process the interrupt to update the sensor sample arrays
+//	        ////max30102_interrupt_handler(&max30102);
+//
+//	        // For demonstration, we take the first sample from each array.
+//	        ////uint32_t red_value = max30102._red_samples[0];
+//	        ////uint32_t ir_value  = max30102._ir_samples[0];
+//
+//	        // Print sensor values over UART
+//	        ////sprintf(msg, "Red: %lu, IR: %lu\r\n", red_value, ir_value);
+//	        ////HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+//
+//	        uint32_t red_value = 10000;
+//	        uint32_t ir_value = 20000;
+//	        // If either reading is above threshold and sound is not already active, start tone
+//	        if ((red_value > THRESHOLD_VALUE || ir_value > THRESHOLD_VALUE) && !sound_active)
+//	        {
+//	            // Start the DAC using DMA to output the E6 tone
+//	        	HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, (uint32_t*)triangle_wave, 50, DAC_ALIGN_12B_R);
+//	            sound_active = 1;
+//	        }
+//	        else if ((red_value <= THRESHOLD_VALUE && ir_value <= THRESHOLD_VALUE) && sound_active)
+//	        {
+//	            HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);
+//	            sound_active = 0;
+//	        }
+//
+//
+//	        // Add a short delay to avoid flooding the UART and allow sensor values to update
+//	        HAL_Delay(100);
+//	    }
+
+	    // Simulate a high sensor reading to trigger sound
+	    // Simulate sensor reading above threshold:
+	    uint32_t red_value = 300;  // above THRESHOLD_VALUE (250)
+	    uint32_t ir_value  = 200;  // one value above threshold is enough
+
+	    if (!sound_active)
+	    {
+	        // Start DAC with triangle_wave array
+	        HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, (uint32_t*)triangle_wave, 50, DAC_ALIGN_12B_R);
+	        sound_active = 1;
+	        sprintf(msg, "Triggering sound...\r\n");
+	        HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	    }
+
+	    // Wait for a few seconds (simulate sensor active period)
+	    HAL_Delay(3000);
+
+	    // Simulate sensor reading below threshold:
+	    red_value = 200;
+	    ir_value = 200;
+
+	    if (sound_active)
+	    {
+	        HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);
+	        sound_active = 0;
+	        sprintf(msg, "Stopping sound...\r\n");
+	        HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
+	    }
+
+	    // Wait for a few seconds before repeating
+	    HAL_Delay(3000);
+
 
 	  // If interrupt flag is active
 	if (max30102_has_interrupt(&max30102))
