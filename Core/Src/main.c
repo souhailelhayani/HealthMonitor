@@ -183,7 +183,6 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-<<<<<<< HEAD
 //      uint32_t red_value = 10000;
 //      uint32_t ir_value = 20000;
 //      // If either reading is above threshold and sound is not already active, start tone
@@ -265,7 +264,6 @@ int main(void)
 	    HAL_Delay(3000);
 
 
-=======
 	  // If interrupt flag is active
 	if (max30102_has_interrupt(&max30102))
 	  // Run interrupt handler to read FIFO
