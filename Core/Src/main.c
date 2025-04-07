@@ -21,14 +21,21 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "circular_q.h"
 
 #include "max30102_for_stm32_hal.h"
 #include "stm32l4s5i_iot01_tsensor.h"
 #include "stm32l4s5i_iot01_accelero.h"
+#include "stm32l4s5i_iot01_gyro.h"
 #include "stm32l4s5i_iot01.h"
 
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
+
+#define ARM_MATH_CM4
+#include "arm_math.h"
+
 
 /* USER CODE END Includes */
 
@@ -39,6 +46,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+#define buffer_size 20
 
 /* USER CODE END PD */
 
@@ -80,7 +89,31 @@ int btn_state = 0;
 
 max30102_t max30102;
 
+//store accelerometer values
 int16_t aDataXYZ[3];
+float aDataXYZ_norm[3];
+float ax, ay, az;
+//store tilt values
+float tilt_x, tilt_y, tilt_z;
+//store square roots of denominators in arctan
+float root_x, root_y, root_z;
+
+//store gyroscope data
+float gDataXYZ[3];
+
+//buffer for last 20 values
+struct queue buffer_x;
+struct queue buffer_y;
+struct queue buffer_z;
+
+float array_x[buffer_size];
+float array_y[buffer_size];
+float array_z[buffer_size];
+
+//alarm flag, checked to sound alarm thru DAC speaker
+uint8_t alarm = 0;
+
+//UART output
 char output[100];
 
 /* USER CODE END 0 */
@@ -123,6 +156,23 @@ int main(void)
 
   //init accelerometer
   BSP_ACCELERO_Init();
+  buffer_x.start = 0;
+  buffer_x.size = buffer_size;
+  buffer_x.end = buffer_size- 1;
+  buffer_x.array = array_x;
+
+  buffer_y.start = 0;
+  buffer_y.size = buffer_size;
+  buffer_y.end = buffer_size- 1;
+  buffer_y.array = array_y;
+
+  buffer_z.start = 0;
+  buffer_z.size = buffer_size;
+  buffer_z.end = buffer_size- 1;
+  buffer_z.array = array_z;
+
+  //init gyroscope
+  BSP_GYRO_Init();
 
   //init the pulse sensor
 
@@ -171,21 +221,102 @@ int main(void)
 	//test to read accelerometer raw values
 	uint16_t len;
 	BSP_ACCELERO_AccGetXYZ(aDataXYZ);
+	// normalize the values
+	aDataXYZ_norm[0] = (aDataXYZ[0] / 1024.0f);
+	aDataXYZ_norm[1] = (aDataXYZ[1] / 1024.0f);
+	aDataXYZ_norm[2] = (aDataXYZ[2] / 1024.0f);
+
+	ax = aDataXYZ_norm[0];
+	ay = aDataXYZ_norm[1];
+	az = aDataXYZ_norm[2];
+
+	//get square root of denominators in arctan
+	arm_sqrt_f32(ay*ay + az*az, &root_x);
+	arm_sqrt_f32(ax*ax + az*az, &root_y);
+	arm_sqrt_f32(ay*ay + ax*ax, &root_z);
+
+	//get tilt values using arctan
+//	arm_atan2_f32(ax, root_x, &tilt_x);
+//	arm_atan2_f32(ay, root_y, &tilt_y);
+//	arm_atan2_f32(az, root_z, &tilt_z);
+	tilt_x = atan2(ax,root_x) * (180.0f / 3.14f);
+	tilt_y = atan2(ay,root_y) * (180.0f / 3.14f);
+	tilt_z = atan2(az,root_z) * (180.0f / 3.14f);
+
 	sprintf(output, "####################################\r\n");
 	len = strlen(output);
 	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
 
-	sprintf(output, "accelerometer x: %d\r\n", aDataXYZ[0]);
+	sprintf(output, "accelerometer raw x %d\r\n", aDataXYZ[0]);
 	len = strlen(output);
 	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
 
-	sprintf(output, "accelerometer y: %d\r\n", aDataXYZ[1]);
+	sprintf(output, "accelerometer raw y: %d\r\n", aDataXYZ[1]);
 	len = strlen(output);
 	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
 
-	sprintf(output, "accelerometer z: %d\r\n", aDataXYZ[2]);
+	sprintf(output, "accelerometer raw z: %d\r\n", aDataXYZ[2]);
 	len = strlen(output);
 	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+
+	sprintf(output, "accelerometer norm x: %.5f\r\n", ax);
+	len = strlen(output);
+	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+
+	sprintf(output, "accelerometer norm y: %.5f\r\n", ay);
+	len = strlen(output);
+	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+
+	sprintf(output, "accelerometer norm z: %.5f\r\n", az);
+	len = strlen(output);
+	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+
+	sprintf(output, "tilt about x axis in degrees: %.5f\r\n", tilt_x);
+	len = strlen(output);
+	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+
+	sprintf(output, "tilt about y axis in degrees: %.5f\r\n", tilt_y);
+	len = strlen(output);
+	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+
+	sprintf(output, "tilt about z axis in degrees: %.5f\r\n", tilt_z);
+	len = strlen(output);
+	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+
+	//add the values read to the circular buffers
+	queue_add(&buffer_x, tilt_x);
+	queue_add(&buffer_y, tilt_y);
+	queue_add(&buffer_z, tilt_z);
+
+	//get the new averages
+	float avg_x = queue_average(&buffer_x);
+	float avg_y = queue_average(&buffer_y);
+	float avg_z = queue_average(&buffer_z);
+
+	//dummy test for alarm
+	if(avg_z >= -90 && avg_z <= -80) {
+		alarm = 1;
+	}
+
+	//get gyroscope data
+//	BSP_GYRO_GetXYZ(gDataXYZ);
+//
+//	sprintf(output, "####################################\r\n");
+//	len = strlen(output);
+//	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+//
+//	sprintf(output, "gyro tilt about x axis: %.5f\r\n", gDataXYZ[0]);
+//	len = strlen(output);
+//	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+//
+//	sprintf(output, "gyro tilt about y axis: %.5f\r\n", gDataXYZ[1]);
+//	len = strlen(output);
+//	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+//
+//	sprintf(output, "gyro tilt about z axis: %.5f\r\n", gDataXYZ[2]);
+//	len = strlen(output);
+//	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+
 	HAL_Delay(100);
 
   }
@@ -502,12 +633,12 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
 	btn_state = (btn_state+1) % 3;
 }
 
-void HAL_TIM_PeriodElapsedCallback (TIM_HandleTypeDef * htim) {
-	if(htim == &htim2) {
-//		index_v = (index_v + 1) % c6_samples;
-//		HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, c6_sine_wave[index_v]);
-	}
-}
+//void HAL_TIM_PeriodElapsedCallback (TIM_HandleTypeDef * htim) {
+//	if(htim == &htim2) {
+////		index_v = (index_v + 1) % c6_samples;
+////		HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_12B_R, c6_sine_wave[index_v]);
+//	}
+//}
 
 /* USER CODE END 4 */
 
