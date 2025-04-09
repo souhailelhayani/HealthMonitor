@@ -199,6 +199,29 @@ int main(void)
   //init gyroscope
   BSP_GYRO_Init();
 
+  //init kalman filter
+  BSP_ACCELERO_AccGetXYZ(aDataXYZ);
+  struct kalman_state x_state;
+  x_state.x = aDataXYZ[0];
+  x_state.p = 0.1;
+  x_state.q = 0.1;
+  x_state.k = 0.0;
+  x_state.r = 0.1;
+
+  struct kalman_state y_state;
+  y_state.x = aDataXYZ[1];
+  y_state.p = 0.1;
+  y_state.q = 0.1;
+  y_state.k = 0.0;
+  y_state.r = 0.1;
+
+  struct kalman_state z_state;
+  z_state.x = aDataXYZ[2];
+  z_state.p = 0.1;
+  z_state.q = 0.1;
+  z_state.k = 0.0;
+  z_state.r = 0.1;
+
   //init the pulse sensor
 
 //  max30102_init(&max30102, &hi2c1);
@@ -236,6 +259,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
 
 //      uint32_t red_value = 10000;
 //      uint32_t ir_value = 20000;
@@ -389,6 +413,12 @@ int main(void)
 	sprintf(output, "tilt about z axis in degrees: %.5f\r\n", tilt_z);
 	len = strlen(output);
 	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+
+
+	//apply kalman filter on each axis value
+	titl_x = update_kalman_c(&x_state, tilt_x);
+	titl_y = update_kalman_c(&y_state, tilt_y);
+	titl_z = update_kalman_c(&z_state, tilt_z);
 
 	//add the values read to the circular buffers
 	queue_add(&buffer_x, tilt_x);
