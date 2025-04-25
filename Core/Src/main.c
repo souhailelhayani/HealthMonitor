@@ -87,8 +87,6 @@ max30102_t max30102;
 #define RATE_SIZE 4  // Size of the array for storing heartbeat rates
 uint32_t lastBeat = 0;  // Time of the last detected heartbeat
 float beatsPerMinute = 0;
-uint8_t rates[RATE_SIZE]; // Array to store the last RATE_SIZE heart rate values
-uint8_t rateSpot = 0;
 uint8_t beatAvg = 0;
 
 
@@ -158,6 +156,7 @@ static void MX_ADC1_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+//overwrite the write fucntion to use printf with UART transmit
 int _write(int file, char *ptr, int len)
 {
 	HAL_UART_Transmit(&huart1, (uint8_t*)ptr, len, HAL_MAX_DELAY);
@@ -245,8 +244,7 @@ int main(void)
   for (uint8_t i = 0; i < RATE_SIZE; i++) {
       rates[i] = 0;
   }
-  rateSpot = 0;
-    beatAvg = 0;
+  beatAvg = 0;
  // Initialize sensor
   max30102_init(&max30102, &hi2c1);
 
@@ -298,7 +296,7 @@ int main(void)
 
   buffer_heart.start = 0;
   buffer_heart.size = 4;
-  buffer_heart.end = 4 - 1;
+  buffer_heart.end = RATE_SIZE - 1;
   buffer_heart.array = array_heart;
 
 
@@ -339,7 +337,6 @@ int main(void)
 	HAL_Delay(1);
 	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
 	adc_temp_value = HAL_ADC_GetValue(&hadc1);
-	vref_value = 3.43;
 	temp_value = ((ts_cal2_temp - ts_cal1_temp) / (float)(ts_cal2 - ts_cal1)) * (adc_temp_value * (vref_value / vref_cal) - (float)ts_cal1) + 30.0;
 	sprintf(output, "temperature: %.1f\r\n", temp_value);
 	len = strlen(output);
@@ -391,9 +388,9 @@ int main(void)
 	}
 
 
-	//read ir values and check for beat
-	 // Process the interrupt
-  //max30102_interrupt_handler(&max30102);
+
+
+	//read heart sensor IR values and calculate heart rate
 
   // Read data from FIFO
   max30102_read_fifo(&max30102);
