@@ -338,14 +338,10 @@ int main(void)
 	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
 	adc_temp_value = HAL_ADC_GetValue(&hadc1);
 	temp_value = ((ts_cal2_temp - ts_cal1_temp) / (float)(ts_cal2 - ts_cal1)) * (adc_temp_value * (vref_value / vref_cal) - (float)ts_cal1) + 30.0;
-	sprintf(output, "temperature: %.1f\r\n", temp_value);
-	len = strlen(output);
-
 
 	if(temp_value >= 38 && alarm == 0) { //sound alarm if temperature becomes too high
 		alarm = 1;
 	}
-
 
 	//read accelerometer raw values
 	BSP_ACCELERO_AccGetXYZ(aDataXYZ);
@@ -389,7 +385,6 @@ int main(void)
 
 
 
-
 	//read heart sensor IR values and calculate heart rate
 
   // Read data from FIFO
@@ -418,9 +413,20 @@ int main(void)
 		  beatAvg = queue_average(&buffer_heart);
 
 		  // Print heart rate information
-		sprintf(output, "BPM: %.1f, Avg BPM: %u\r\n", beatsPerMinute, beatAvg);
-		len = strlen(output);
-		HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+		sprintf(output, "\r\n================= SENSOR READINGS =================\r\n");
+		HAL_UART_Transmit(&huart1, (uint8_t*)output, strlen(output), 200);
+
+		sprintf(output, "💓 Heart Rate : %.1f BPM\r\n", beatsPerMinute);
+		HAL_UART_Transmit(&huart1, (uint8_t*)output, strlen(output), 200);
+
+		sprintf(output, "🌡 Temperature : %.1f °C\r\n", temp_value);
+		HAL_UART_Transmit(&huart1, (uint8_t*)output, strlen(output), 200);
+
+		sprintf(output, "📐 Tilt Angles : X = %.1f°, Y = %.1f°, Z = %.1f°\r\n", tilt_x, tilt_y, tilt_z);
+		HAL_UART_Transmit(&huart1, (uint8_t*)output, strlen(output), 200);
+
+		sprintf(output, "==================================================\r\n\r\n");
+		HAL_UART_Transmit(&huart1, (uint8_t*)output, strlen(output), 200);
 
 		if(beatAvg > 170 && alarm == 0) { //if higher than 170, sound alarm
 			alarm = 1;
