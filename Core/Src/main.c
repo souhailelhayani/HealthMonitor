@@ -799,22 +799,6 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
-//	HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);
-//
-//	switch(btn_state) {
-//	case 0:
-//		HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, c6_sine_wave, c6_samples, DAC_ALIGN_12B_R);
-//		break;
-//	case 1:
-//		HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, g6_sine_wave, g6_samples, DAC_ALIGN_12B_R);
-//		break;
-//	case 2:
-//		HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, e6_sine_wave, e6_samples, DAC_ALIGN_12B_R);
-//		break;
-//	default:
-//		break;
-//	}
-
 	btn_state = (btn_state+1) % 3;
 }
 
