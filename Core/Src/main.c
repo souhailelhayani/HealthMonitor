@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "circular_q.h"
+#include "kalman.h"
 
 #include "max30102_for_stm32_hal.h"
 #include "stm32l4s5i_iot01_tsensor.h"
@@ -32,6 +33,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <stdbool.h>
+#include "pulse_detection_algorithm.h"
 
 #define ARM_MATH_CM4
 #include "arm_math.h"
@@ -47,38 +50,28 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 
-#define buffer_size 20
+#define buffer_size 10
+
+#define VREF_INT_ADDR (uint16_t*)(uint32_t) 0x1FFF75AA //length 2 bytes
+
+#define TS_CAL1_ADDR (uint16_t*)(uint32_t) 0x1FFF75A8
+#define TS_CAL2_ADDR (uint16_t*)(uint32_t) 0x1FFF75CA
+
+#define PI 3.14f
+#define MAX_VALUE 3276 //12 bit DAC 80% of 4095
 
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-#define THRESHOLD_VALUE 250
-
-// Triangle wave sample array (50 samples) – using the values from your previous project
-uint16_t triangle_wave[50] = {
-    0, 163, 327, 491, 655, 819, 982, 1146, 1310, 1474,
-    1638, 1801, 1965, 2129, 2293, 2457, 2620, 2784, 2948, 3112,
-    3276, 3439, 3603, 3767, 3931, 4095, 3931, 3767, 3603, 3439,
-    3276, 3112, 2948, 2784, 2620, 2457, 2293, 2129, 1965, 1801,
-    1638, 1474, 1310, 1146, 982, 819, 655, 491, 327, 163
-};
-
-uint8_t sound_active = 0; // flag to indicate whether the tone is currently playing
-
-int tone; //keeps track of tone
-int C6_size = 44; // C6 is 1 kHz, so 44 samples per period
-int E6_size = 33; // E6 is 1.3 kHz, so 33 samples per period
-int G6_size = 28; // G6 is 1.57 kHz, so 28 samples per period
-uint16_t C6_data[44];
-uint16_t E6_data[33];
-uint16_t G6_data[28];
 
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
+
 DAC_HandleTypeDef hdac1;
-DMA_HandleTypeDef hdma_dac1_ch1;
+DMA_HandleTypeDef hdma_dac1_ch2;
 
 I2C_HandleTypeDef hi2c1;
 I2C_HandleTypeDef hi2c2;
@@ -88,6 +81,61 @@ TIM_HandleTypeDef htim2;
 UART_HandleTypeDef huart1;
 
 /* USER CODE BEGIN PV */
+
+max30102_t max30102;
+// Heart rate calculation variables
+#define RATE_SIZE 4  // Size of the array for storing heartbeat rates
+uint32_t lastBeat = 0;  // Time of the last detected heartbeat
+float beatsPerMinute = 0;
+uint8_t beatAvg = 0;
+
+
+int tone; //keeps track of tone
+int C6_size = 44; // C6 is 1 kHz, so 44 samples per period
+int E6_size = 33; // E6 is 1.3 kHz, so 33 samples per period
+int G6_size = 28; // G6 is 1.57 kHz, so 28 samples per period
+uint16_t C6_data[44];
+uint16_t E6_data[33];
+uint16_t G6_data[28];
+
+
+//accelero
+
+//store kalman state
+struct kalman_state x_state;
+struct kalman_state y_state;
+struct kalman_state z_state;
+
+//store accelerometer values
+int16_t aDataXYZ[3];
+float aDataXYZ_norm[3];
+float ax, ay, az;
+//store tilt values
+float tilt_x, tilt_y, tilt_z;
+//store square roots of denominators in arctan
+float root_x, root_y, root_z;
+
+//buffer for last 20 values
+struct queue buffer_x;
+struct queue buffer_y;
+struct queue buffer_z;
+struct queue buffer_heart;
+
+float array_x[buffer_size];
+float array_y[buffer_size];
+float array_z[buffer_size];
+float array_heart[4];
+
+//alarm flag, checked to sound alarm thru DAC speaker
+uint8_t alarm = 0;
+uint8_t temp_alarm = 0;
+
+//UART output
+char output[100];
+
+
+//adc
+int CHANNEL = ADC_CHANNEL_VREFINT;
 
 /* USER CODE END PV */
 
@@ -100,6 +148,7 @@ static void MX_DAC1_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_I2C1_Init(void);
+static void MX_ADC1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -107,36 +156,21 @@ static void MX_I2C1_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-int btn_state = 0;
-char msg[64];
-max30102_t max30102;
+//overwrite the write fucntion to use printf with UART transmit
+int _write(int file, char *ptr, int len)
+{
+	HAL_UART_Transmit(&huart1, (uint8_t*)ptr, len, HAL_MAX_DELAY);
+	return len;
+}
 
-//store accelerometer values
-int16_t aDataXYZ[3];
-float aDataXYZ_norm[3];
-float ax, ay, az;
-//store tilt values
-float tilt_x, tilt_y, tilt_z;
-//store square roots of denominators in arctan
-float root_x, root_y, root_z;
+void generate_sine_wave(uint16_t wave[], int num_samples){
+	float step_angle = 2.0f * PI / num_samples;
+	int max_amplitude = MAX_VALUE / 2;
 
-//store gyroscope data
-float gDataXYZ[3];
-
-//buffer for last 20 values
-struct queue buffer_x;
-struct queue buffer_y;
-struct queue buffer_z;
-
-float array_x[buffer_size];
-float array_y[buffer_size];
-float array_z[buffer_size];
-
-//alarm flag, checked to sound alarm thru DAC speaker
-uint8_t alarm = 0;
-
-//UART output
-char output[100];
+	for (int i = 0; i < num_samples; i++) {
+		wave[i] = max_amplitude * (1 + arm_sin_f32(step_angle* i)); //sine values are between -1 and 1, add 1 to make them between 0 and 2
+	}
+}
 
 /* USER CODE END 0 */
 
@@ -175,9 +209,73 @@ int main(void)
   MX_TIM2_Init();
   MX_USART1_UART_Init();
   MX_I2C1_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
 
+  //generate DAC waves
+  generate_sine_wave(C6_data, C6_size);
+  generate_sine_wave(G6_data, G6_size);
+  generate_sine_wave(E6_data, E6_size);
+
+  //setup temperature adc
+  uint16_t vref_int = *VREF_INT_ADDR;
+  float vref_cal = 3.0;
+
+  float ts_cal2_temp = 130.0;
+
+  float ts_cal1_temp = 30.0;
+  uint16_t ts_cal1 = *TS_CAL1_ADDR;
+  uint16_t ts_cal2 = *TS_CAL2_ADDR;
+  uint16_t adc_temp_value;
+  float temp_value;
+
+  HAL_Delay(1);
+  HAL_ADC_Start(&hadc1);
+  HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
+  uint16_t adc_volt_value = HAL_ADC_GetValue(&hadc1);
+
+  float vref_value = (vref_cal * vref_int) / adc_volt_value;
+  CHANNEL = ADC_CHANNEL_TEMPSENSOR;
+  MX_ADC1_Init();
+
+  //setup heart sensor
+  lastBeat = HAL_GetTick();
+  beatsPerMinute = 0;
+  for (uint8_t i = 0; i < RATE_SIZE; i++) {
+      rates[i] = 0;
+  }
+  beatAvg = 0;
+ // Initialize sensor
+  max30102_init(&max30102, &hi2c1);
+
+
+  // Reset sensor and clear FIFO
+  max30102_reset(&max30102);
+  max30102_clear_fifo(&max30102);
+
+    // Configure FIFO settings
+  max30102_set_fifo_config(&max30102, max30102_smp_ave_8, 1, 7);
+
+  // Configure LED settings
+  max30102_set_led_pulse_width(&max30102, max30102_pw_16_bit);
+  max30102_set_adc_resolution(&max30102, max30102_adc_2048);
+  max30102_set_sampling_rate(&max30102, max30102_sr_800);
+  max30102_set_led_current_1(&max30102, 6.2);
+  max30102_set_led_current_2(&max30102, 6.2);
+
+  // Enter SpO2 measurement mode
+  max30102_set_mode(&max30102, max30102_heart_rate);
+
+  // Enable interrupts
+  max30102_set_a_full(&max30102, 1);
+  max30102_set_die_temp_en(&max30102, 1);
+  max30102_set_die_temp_rdy(&max30102, 1);
+
+  printf("MAX30102 initialized and configured\r\n");
+
+
   //start timer 2, used by dma
+  HAL_TIM_Base_Start_IT(&htim2);
 
   //init accelerometer
   BSP_ACCELERO_Init();
@@ -196,59 +294,32 @@ int main(void)
   buffer_z.end = buffer_size- 1;
   buffer_z.array = array_z;
 
-  //init gyroscope
-  BSP_GYRO_Init();
+  buffer_heart.start = 0;
+  buffer_heart.size = 4;
+  buffer_heart.end = RATE_SIZE - 1;
+  buffer_heart.array = array_heart;
 
-  //init kalman filter
+
+  //init kalman filter for accelerometer values
   BSP_ACCELERO_AccGetXYZ(aDataXYZ);
-  struct kalman_state x_state;
+
   x_state.x = aDataXYZ[0];
   x_state.p = 0.1;
   x_state.q = 0.1;
   x_state.k = 0.0;
   x_state.r = 0.1;
 
-  struct kalman_state y_state;
   y_state.x = aDataXYZ[1];
   y_state.p = 0.1;
   y_state.q = 0.1;
   y_state.k = 0.0;
   y_state.r = 0.1;
 
-  struct kalman_state z_state;
   z_state.x = aDataXYZ[2];
   z_state.p = 0.1;
   z_state.q = 0.1;
   z_state.k = 0.0;
   z_state.r = 0.1;
-
-  //init the pulse sensor
-
-//  max30102_init(&max30102, &hi2c1);
-//  max30102_init(&max30102, &hi2c2);
-//  max30102_reset(&max30102);
-//  max30102_clear_fifo(&max30102);
-//  // FIFO configurations
-//  max30102_set_fifo_config(&max30102, max30102_smp_ave_8, 1, 7);
-//  // LED configurations
-//  max30102_set_led_pulse_width(&max30102, max30102_spo2_16_bit);
-//  max30102_set_adc_resolution(&max30102, max30102_spo2_adc_2048);
-//  max30102_set_sampling_rate(&max30102, max30102_spo2_800);
-//  max30102_set_led_pulse_width(&max30102, max30102_pw_16_bit);
-//  max30102_set_adc_resolution(&max30102, max30102_adc_2048);
-//  max30102_set_sampling_rate(&max30102, max30102_sr_800);
-//  max30102_set_led_current_1(&max30102, 6.2);
-//  max30102_set_led_current_2(&max30102, 6.2);
-//
-//  // Enter SpO2 mode
-//  max30102_set_mode(&max30102, max30102_spo2);
-//  // Enable FIFO_A_FULL interrupt
-//  max30102_set_a_full(&max30102, 1);
-//  // Enable die temperature measurement
-//  max30102_set_die_temp_en(&max30102, 1);
-//  // Enable DIE_TEMP_RDY interrupt
-//  max30102_set_die_temp_rdy(&max30102, 1);
-
 
   /* USER CODE END 2 */
 
@@ -259,98 +330,20 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-
-
-//      uint32_t red_value = 10000;
-//      uint32_t ir_value = 20000;
-//      // If either reading is above threshold and sound is not already active, start tone
-//      if ((red_value > THRESHOLD_VALUE || ir_value > THRESHOLD_VALUE) && !sound_active)
-//      {
-//          // Start the DAC using DMA to output the E6 tone
-//      	HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, (uint32_t*)triangle_wave, 50, DAC_ALIGN_12B_R);
-//          sound_active = 1;
-//      }
-//      else if ((red_value <= THRESHOLD_VALUE && ir_value <= THRESHOLD_VALUE) && sound_active)
-//      {
-//          HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);
-//          sound_active = 0;
-//      }
-//
-//	    if (max30102_has_interrupt(&max30102))
-//	    {
-//	        // Process the interrupt to update the sensor sample arrays
-//	        ////max30102_interrupt_handler(&max30102);
-//
-//	        // For demonstration, we take the first sample from each array.
-//	        ////uint32_t red_value = max30102._red_samples[0];
-//	        ////uint32_t ir_value  = max30102._ir_samples[0];
-//
-//	        // Print sensor values over UART
-//	        ////sprintf(msg, "Red: %lu, IR: %lu\r\n", red_value, ir_value);
-//	        ////HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-//
-//	        uint32_t red_value = 10000;
-//	        uint32_t ir_value = 20000;
-//	        // If either reading is above threshold and sound is not already active, start tone
-//	        if ((red_value > THRESHOLD_VALUE || ir_value > THRESHOLD_VALUE) && !sound_active)
-//	        {
-//	            // Start the DAC using DMA to output the E6 tone
-//	        	HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, (uint32_t*)triangle_wave, 50, DAC_ALIGN_12B_R);
-//	            sound_active = 1;
-//	        }
-//	        else if ((red_value <= THRESHOLD_VALUE && ir_value <= THRESHOLD_VALUE) && sound_active)
-//	        {
-//	            HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);
-//	            sound_active = 0;
-//	        }
-//
-//
-//	        // Add a short delay to avoid flooding the UART and allow sensor values to update
-//	        HAL_Delay(100);
-//	    }
-
-	    // Simulate a high sensor reading to trigger sound
-	    // Simulate sensor reading above threshold:
-	    uint32_t red_value = 300;  // above THRESHOLD_VALUE (250)
-	    uint32_t ir_value  = 200;  // one value above threshold is enough
-
-	    if (!sound_active)
-	    {
-	        // Start DAC with triangle_wave array
-	        HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1, (uint32_t*)triangle_wave, 50, DAC_ALIGN_12B_R);
-	        sound_active = 1;
-	        sprintf(msg, "Triggering sound...\r\n");
-	        HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-	    }
-
-	    // Wait for a few seconds (simulate sensor active period)
-	    HAL_Delay(3000);
-
-	    // Simulate sensor reading below threshold:
-	    red_value = 200;
-	    ir_value = 200;
-
-	    if (sound_active)
-	    {
-	        HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_1);
-	        sound_active = 0;
-	        sprintf(msg, "Stopping sound...\r\n");
-	        HAL_UART_Transmit(&huart1, (uint8_t*)msg, strlen(msg), HAL_MAX_DELAY);
-	    }
-
-	    // Wait for a few seconds before repeating
-	    HAL_Delay(3000);
-
-
-	  // If interrupt flag is active
-	if (max30102_has_interrupt(&max30102))
-	  // Run interrupt handler to read FIFO
-	  max30102_interrupt_handler(&max30102);
-
-
-
-	//test to read accelerometer raw values
 	uint16_t len;
+
+	//get temperature values
+	HAL_ADC_Start(&hadc1);
+	HAL_Delay(1);
+	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
+	adc_temp_value = HAL_ADC_GetValue(&hadc1);
+	temp_value = ((ts_cal2_temp - ts_cal1_temp) / (float)(ts_cal2 - ts_cal1)) * (adc_temp_value * (vref_value / vref_cal) - (float)ts_cal1) + 30.0;
+
+	if(temp_value >= 38 && alarm == 0) { //sound alarm if temperature becomes too high
+		alarm = 1;
+	}
+
+	//read accelerometer raw values
 	BSP_ACCELERO_AccGetXYZ(aDataXYZ);
 	// normalize the values
 	aDataXYZ_norm[0] = (aDataXYZ[0] / 1024.0f);
@@ -366,59 +359,15 @@ int main(void)
 	arm_sqrt_f32(ax*ax + az*az, &root_y);
 	arm_sqrt_f32(ay*ay + ax*ax, &root_z);
 
-	//get tilt values using arctan
-//	arm_atan2_f32(ax, root_x, &tilt_x);
-//	arm_atan2_f32(ay, root_y, &tilt_y);
-//	arm_atan2_f32(az, root_z, &tilt_z);
+	//get tilt values in degrees
 	tilt_x = atan2(ax,root_x) * (180.0f / 3.14f);
 	tilt_y = atan2(ay,root_y) * (180.0f / 3.14f);
 	tilt_z = atan2(az,root_z) * (180.0f / 3.14f);
 
-	sprintf(output, "####################################\r\n");
-	len = strlen(output);
-	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
-
-	sprintf(output, "accelerometer raw x %d\r\n", aDataXYZ[0]);
-	len = strlen(output);
-	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
-
-	sprintf(output, "accelerometer raw y: %d\r\n", aDataXYZ[1]);
-	len = strlen(output);
-	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
-
-	sprintf(output, "accelerometer raw z: %d\r\n", aDataXYZ[2]);
-	len = strlen(output);
-	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
-
-	sprintf(output, "accelerometer norm x: %.5f\r\n", ax);
-	len = strlen(output);
-	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
-
-	sprintf(output, "accelerometer norm y: %.5f\r\n", ay);
-	len = strlen(output);
-	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
-
-	sprintf(output, "accelerometer norm z: %.5f\r\n", az);
-	len = strlen(output);
-	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
-
-	sprintf(output, "tilt about x axis in degrees: %.5f\r\n", tilt_x);
-	len = strlen(output);
-	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
-
-	sprintf(output, "tilt about y axis in degrees: %.5f\r\n", tilt_y);
-	len = strlen(output);
-	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
-
-	sprintf(output, "tilt about z axis in degrees: %.5f\r\n", tilt_z);
-	len = strlen(output);
-	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
-
-
 	//apply kalman filter on each axis value
-	titl_x = update_kalman_c(&x_state, tilt_x);
-	titl_y = update_kalman_c(&y_state, tilt_y);
-	titl_z = update_kalman_c(&z_state, tilt_z);
+	tilt_x = update_kalman_c(&x_state, tilt_x);
+	tilt_y = update_kalman_c(&y_state, tilt_y);
+	tilt_z = update_kalman_c(&z_state, tilt_z);
 
 	//add the values read to the circular buffers
 	queue_add(&buffer_x, tilt_x);
@@ -430,31 +379,67 @@ int main(void)
 	float avg_y = queue_average(&buffer_y);
 	float avg_z = queue_average(&buffer_z);
 
-	//dummy test for alarm
-	if(avg_z >= -90 && avg_z <= -80) {
+	if(tilt_z >= -90 && tilt_z <= -80 && alarm == 0) { //if 90 degrees rotation about z axis, sound alarm
 		alarm = 1;
 	}
 
-	//get gyroscope data
-	BSP_GYRO_GetXYZ(gDataXYZ);
 
-	sprintf(output, "####################################\r\n");
-	len = strlen(output);
-	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
 
-	sprintf(output, "gyro tilt about x axis: %.5f\r\n", gDataXYZ[0]);
-	len = strlen(output);
-	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+	//read heart sensor IR values and calculate heart rate
 
-	sprintf(output, "gyro tilt about y axis: %.5f\r\n", gDataXYZ[1]);
-	len = strlen(output);
-	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+  // Read data from FIFO
+  max30102_read_fifo(&max30102);
 
-	sprintf(output, "gyro tilt about z axis: %.5f\r\n", gDataXYZ[2]);
-	len = strlen(output);
-	HAL_UART_Transmit(&huart1, (uint8_t*)output, len, 200);
+  // Access the data from the max30102 object
+  // The first sample in each array is the most recent
+  uint32_t ir_sample = max30102._ir_samples[0];
+  uint32_t red_sample = max30102._red_samples[0];
 
-	HAL_Delay(100);
+  // Check for heartbeat
+
+  if (checkForBeat(ir_sample) == true)
+  {
+	  // We sensed a beat!
+	  uint32_t currentTime = HAL_GetTick();
+	  uint32_t delta = currentTime - lastBeat;
+	  lastBeat = currentTime;
+
+	  beatsPerMinute = 60 / (delta / 1000.0);
+
+	  if (beatsPerMinute < 255 && beatsPerMinute > 20)
+	  {
+		  queue_add(&buffer_heart, beatsPerMinute);
+
+		  beatAvg = queue_average(&buffer_heart);
+
+		  // Print heart rate information
+		sprintf(output, "\r\n================= SENSOR READINGS =================\r\n");
+		HAL_UART_Transmit(&huart1, (uint8_t*)output, strlen(output), 200);
+
+		sprintf(output, "💓 Heart Rate : %.1f BPM\r\n", beatsPerMinute);
+		HAL_UART_Transmit(&huart1, (uint8_t*)output, strlen(output), 200);
+
+		sprintf(output, "🌡 Temperature : %.1f °C\r\n", temp_value);
+		HAL_UART_Transmit(&huart1, (uint8_t*)output, strlen(output), 200);
+
+		sprintf(output, "📐 Tilt Angles : X = %.1f°, Y = %.1f°, Z = %.1f°\r\n", tilt_x, tilt_y, tilt_z);
+		HAL_UART_Transmit(&huart1, (uint8_t*)output, strlen(output), 200);
+
+		sprintf(output, "==================================================\r\n\r\n");
+		HAL_UART_Transmit(&huart1, (uint8_t*)output, strlen(output), 200);
+
+		if(beatAvg > 170 && alarm == 0) { //if higher than 170, sound alarm
+			alarm = 1;
+		}
+	  }
+  }
+
+  if(alarm == 1) {
+	  HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_2, G6_data, G6_size, DAC_ALIGN_12B_R);
+	  alarm = 2; //alarm is playing is 2
+  }
+
+	//HAL_Delay(10);
 
   }
   /* USER CODE END 3 */
@@ -511,6 +496,64 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+
+  /** Common config
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV1;
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  hadc1.Init.LowPowerAutoWait = DISABLE;
+  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.DMAContinuousRequests = DISABLE;
+  hadc1.Init.Overrun = ADC_OVR_DATA_PRESERVED;
+  hadc1.Init.OversamplingMode = DISABLE;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_TEMPSENSOR;
+  sConfig.Rank = ADC_REGULAR_RANK_1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;
+  sConfig.SingleDiff = ADC_SINGLE_ENDED;
+  sConfig.OffsetNumber = ADC_OFFSET_NONE;
+  sConfig.Offset = 0;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
   * @brief DAC1 Initialization Function
   * @param None
   * @retval None
@@ -536,7 +579,7 @@ static void MX_DAC1_Init(void)
     Error_Handler();
   }
 
-  /** DAC channel OUT1 config
+  /** DAC channel OUT2 config
   */
   sConfig.DAC_SampleAndHold = DAC_SAMPLEANDHOLD_DISABLE;
   sConfig.DAC_Trigger = DAC_TRIGGER_T2_TRGO;
@@ -544,7 +587,7 @@ static void MX_DAC1_Init(void)
   sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
   sConfig.DAC_ConnectOnChipPeripheral = DAC_CHIPCONNECT_DISABLE;
   sConfig.DAC_UserTrimming = DAC_TRIMMING_FACTORY;
-  if (HAL_DAC_ConfigChannel(&hdac1, &sConfig, DAC_CHANNEL_1) != HAL_OK)
+  if (HAL_DAC_ConfigChannel(&hdac1, &sConfig, DAC_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }
@@ -799,7 +842,15 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin){
+<<<<<<< HEAD
 	btn_state = (btn_state+1) % 3;
+=======
+
+	if(alarm == 2) {
+		HAL_DAC_Stop_DMA(&hdac1, DAC_CHANNEL_2);
+		alarm = 0;
+	}
+>>>>>>> heartsensor
 }
 
 //void HAL_TIM_PeriodElapsedCallback (TIM_HandleTypeDef * htim) {

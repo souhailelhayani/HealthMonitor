@@ -14,10 +14,10 @@ float update_kalman_c(struct kalman_state* state, float measurement)
 	state->p = (1 - state->k) * state->p;
 
 	//TODO check overflow
-	int flags = __get_FPSCR();
-	if((flags & 268435456) != 0) {
-		return 1;
-	}
+//	int flags = __get_FPSCR();
+//	if((flags & 268435456) != 0) {
+//		return 1;
+//	}
 
 	return state->x;
 }
